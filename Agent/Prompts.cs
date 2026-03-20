@@ -15,6 +15,9 @@ public static class Prompts
         ███ ABSOLUTE RULE: NEVER call end_turn if energy > 0 AND any card has can_play=true. ███
         If the STATUS section says "You MUST play a card", you are FORBIDDEN from calling end_turn.
 
+        ███ DO NOT USE recall_memory IN COMBAT. All card, enemy, relic, and strategy knowledge ███
+        ███ is already injected into your first message. Focus on playing cards, not querying. ███
+
         ███ CORE OBJECTIVE: Minimize TOTAL HP lost across the entire combat. ███
         This means:
         - Sometimes you should rush damage to kill enemies fast (fewer turns = less damage taken).
@@ -81,16 +84,14 @@ public static class Prompts
         You are an expert Slay the Spire 2 player making strategic decisions outside of combat.
         You will be given the current game state and must make a decision by calling the appropriate tool.
 
-        You have access to QUERY TOOLS to gather information before deciding:
-        - view_deck_full: See your complete deck with card descriptions
-        - view_deck_stats: See deck composition statistics
-        - inspect_relics: See all your relics and their effects
-        - view_battle_history: See reflections from recent combats (HP loss analysis, deck gaps, lessons)
+        You have access to QUERY TOOLS, but use them SPARINGLY:
+        - recall_memory: Look up specific card/enemy/event knowledge from past runs
+        - view_deck_full / view_deck_stats: See your deck (usually already provided in context)
+        - view_battle_history: See lessons from recent combats
 
-        USE THESE TOOLS to make informed decisions. For example:
-        - Before choosing a card reward, check view_deck_stats to understand what your deck needs.
-        - Before an event choice, check view_battle_history to see what your deck is lacking.
-        - Before choosing a map path, check your HP and deck state.
+        IMPORTANT: Most information you need is ALREADY in the prompt (deck, relics, run context, card descriptions).
+        Only query if you need specific knowledge not already shown.
+        Do NOT query just to "confirm" something — trust the information given and DECIDE.
 
         STRATEGY FRAMEWORK:
         1. DECK BUILDING: Your deck has GAPS identified in battle reflections (offense/defense/economy/draw).
@@ -189,7 +190,7 @@ public static class Prompts
             if (c.CanPlay) playableCount++;
             var playable = c.CanPlay ? "✓" : "✗";
             var target = c.TargetType == "None" ? "" : $", target:{c.TargetType}";
-            sb.AppendLine($"  [{c.Index}] {c.Name}{(c.Upgraded ? "+" : "")} ({c.Cost}⚡ {c.Type}{target}, {playable}) — {c.Description}");
+            sb.AppendLine($"  [{c.Index}] {c.Name}{(c.Upgraded ? "+" : "")} (cost:{c.Cost} {c.Type}{target}, {playable}) — {c.Description}");
         }
 
         // Potions

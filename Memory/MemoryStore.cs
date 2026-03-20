@@ -378,6 +378,61 @@ public class MemoryStore
         }
     }
 
+    /// <summary>
+    /// Get a compact index of what's in memory — category counts and entity names.
+    /// Used to tell the agent what's available so it doesn't blindly search.
+    /// </summary>
+    public string GetMemoryIndex()
+    {
+        var sb = new System.Text.StringBuilder();
+
+        void IndexCategory(string category, string label)
+        {
+            var dir = GetCategoryDir(category);
+            if (!Directory.Exists(dir)) return;
+            var files = Directory.GetFiles(dir, "*.json");
+            if (files.Length == 0) return;
+            var names = files.Select(f => Path.GetFileNameWithoutExtension(f)
+                .Replace("_", " ")).Take(20);
+            sb.AppendLine($"  {label} ({files.Length}): {string.Join(", ", names)}");
+        }
+
+        sb.AppendLine("Memory index:");
+        IndexCategory("card", "Cards");
+        IndexCategory("enemy", "Enemies");
+        IndexCategory("event", "Events");
+        IndexCategory("relic", "Relics");
+
+        // Character-scoped
+        var archDir = Path.Combine(_basePath, _characterId, "archetypes");
+        if (Directory.Exists(archDir))
+        {
+            var files = Directory.GetFiles(archDir, "*.json");
+            if (files.Length > 0)
+                sb.AppendLine($"  Archetypes ({files.Length}): {string.Join(", ", files.Select(f => Path.GetFileNameWithoutExtension(f).Replace("_", " ")))}");
+        }
+
+        var runDir = Path.Combine(_basePath, _characterId, "runs");
+        if (Directory.Exists(runDir))
+        {
+            var files = Directory.GetFiles(runDir, "*.json");
+            if (files.Length > 0)
+                sb.AppendLine($"  Runs: {files.Length} completed");
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>Get all entity names in a category (for "did you mean?" suggestions).</summary>
+    public List<string> GetEntityNames(string category)
+    {
+        var dir = GetCategoryDir(category);
+        if (!Directory.Exists(dir)) return [];
+        return Directory.GetFiles(dir, "*.json")
+            .Select(f => Path.GetFileNameWithoutExtension(f).Replace("_", " "))
+            .ToList();
+    }
+
     /// <summary>Check if an entity needs merging (8+ observations).</summary>
     public bool NeedsMerge(string category, string name)
     {

@@ -999,8 +999,24 @@ public class GameFlowController
             summary.Gold = player.Gold;
             summary.Floor = runState.TotalFloor;
             summary.Act = runState.CurrentActIndex + 1;
-            summary.Relics = player.Relics.Select(r => r.Title?.ToString() ?? r.GetType().Name).ToList();
-            summary.Potions = player.Potions.Select(p => p.Title?.ToString() ?? p.GetType().Name).ToList();
+            summary.Relics = player.Relics.Select(r =>
+            {
+                var name = r.Title?.GetRawText() ?? r.GetType().Name;
+                string desc = "";
+                try { desc = r.Description?.GetRawText() ?? ""; }
+                catch { }
+                return string.IsNullOrEmpty(desc) ? name : $"{name} ({desc})";
+            }).ToList();
+            summary.Potions = player.Potions.Select(p =>
+            {
+                var name = p.Title?.GetRawText() ?? p.GetType().Name;
+                string desc = "";
+                try { desc = p.Description?.GetRawText() ?? ""; }
+                catch { }
+                return string.IsNullOrEmpty(desc) ? name : $"{name} ({desc})";
+            }).ToList();
+            summary.PotionSlots = player.Potions.Count();
+            summary.PotionSlotsMax = player.MaxPotionCount;
 
             // Get deck cards
             var pcs = player.PlayerCombatState;
@@ -1008,7 +1024,7 @@ public class GameFlowController
             {
                 summary.DeckCards = pcs.AllCards.Select(c =>
                 {
-                    var name = c.Title?.ToString() ?? c.GetType().Name;
+                    var name = c.Title ?? c.GetType().Name;
                     var up = c.IsUpgraded ? "+" : "";
                     var cost = c.EnergyCost?.GetAmountToSpend() ?? 0;
                     return $"{name}{up} ({cost}⚡ {c.Type})";
@@ -1031,7 +1047,7 @@ public class GameFlowController
     {
         if (card == null) return "Unknown card";
 
-        var name = card.Title?.ToString() ?? card.GetType().Name;
+        var name = card.Title ?? card.GetType().Name;
         var upgraded = card.IsUpgraded ? "+" : "";
         var cost = card.EnergyCost?.GetAmountToSpend() ?? 0;
         var type = card.Type.ToString();

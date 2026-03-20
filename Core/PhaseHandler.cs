@@ -42,6 +42,7 @@ public class PhaseHandler
     private int _lastRewardCount = -1;
     private int _rewardStuckCount;
     private readonly HashSet<int> _skippedRewardIndices = new();
+    private bool _cardRewardSkipped;
 
     /// <summary>
     /// Handle the current phase. Returns true if something was done.
@@ -130,15 +131,22 @@ public class PhaseHandler
         if (rewardsScreen == null) return false;
         var screenNode = (Node)rewardsScreen;
 
-        // Click one reward button at a time, skipping ones that can't be collected
+        // Click one reward button at a time
+        // Pre-check: are potion slots full?
+        bool potionsFull = false;
+        try
+        {
+            var player = RunManager.Instance?.DebugOnlyGetState()?.Players.FirstOrDefault();
+            if (player != null) potionsFull = !player.HasOpenPotionSlots;
+        }
+        catch { }
+
         var rewardButtons = UiHelper.FindAll<NRewardButton>(screenNode);
         if (rewardButtons.Count > 0)
         {
             // Detect stuck on a specific button: same count after clicking
             if (rewardButtons.Count == _lastRewardCount)
-            {
                 _rewardStuckCount++;
-            }
             else
             {
                 _rewardStuckCount = 0;
@@ -146,28 +154,53 @@ public class PhaseHandler
             }
             _lastRewardCount = rewardButtons.Count;
 
-            // If stuck on current button (3 retries), mark it as skipped, try next
             if (_rewardStuckCount >= 3)
             {
-                if (!_skippedRewardIndices.Contains(0))
-                {
-                    Log.Info("[AutoPlay] Rewards: reward can't be collected (e.g. potions full), skipping");
-                    _skippedRewardIndices.Add(_skippedRewardIndices.Count);
-                }
+                _skippedRewardIndices.Add(_skippedRewardIndices.Count);
+                Log.Info($"[AutoPlay] Rewards: reward stuck, skipping (total skipped: {_skippedRewardIndices.Count})");
                 _rewardStuckCount = 0;
             }
 
-            // Find the first non-skipped reward
+            // Find the first clickable reward (skip stuck ones + skip potions if full)
             for (int i = _skippedRewardIndices.Count; i < rewardButtons.Count; i++)
             {
                 var btn = rewardButtons[i];
-                if (GodotObject.IsInstanceValid(btn))
+                if (!GodotObject.IsInstanceValid(btn)) continue;
+
+                // Skip potion rewards if potion slots are full
+                if (potionsFull)
                 {
-                    Log.Info($"[AutoPlay] Rewards: clicking reward {i} ({rewardButtons.Count} total, {_skippedRewardIndices.Count} skipped)");
-                    await UiHelper.Click(btn, 100);
-                    await Task.Delay(ActionDelayMs, ct);
-                    return true;
+                    try
+                    {
+                        if (btn.Reward is MegaCrit.Sts2.Core.Rewards.PotionReward)
+                        {
+                            Log.Info($"[AutoPlay] Rewards: skipping potion reward (slots full)");
+                            _skippedRewardIndices.Add(i);
+                            continue;
+                        }
+                    }
+                    catch { }
                 }
+
+                // Skip card reward if agent already chose to skip it
+                if (_cardRewardSkipped)
+                {
+                    try
+                    {
+                        if (btn.Reward is MegaCrit.Sts2.Core.Rewards.CardReward)
+                        {
+                            Log.Info("[AutoPlay] Rewards: skipping card reward (agent skipped)");
+                            _skippedRewardIndices.Add(i);
+                            continue;
+                        }
+                    }
+                    catch { }
+                }
+
+                Log.Info($"[AutoPlay] Rewards: clicking reward {i} ({rewardButtons.Count} total, {_skippedRewardIndices.Count} skipped)");
+                await UiHelper.Click(btn, 100);
+                await Task.Delay(ActionDelayMs, ct);
+                return true;
             }
 
             // All rewards skipped — fall through to proceed
@@ -177,6 +210,7 @@ public class PhaseHandler
         _lastRewardCount = -1;
         _rewardStuckCount = 0;
         _skippedRewardIndices.Clear();
+        _cardRewardSkipped = false;
 
         var linkedRewards = UiHelper.FindAll<NLinkedRewardSet>(screenNode);
         if (linkedRewards.Count > 0)
@@ -193,13 +227,27 @@ public class PhaseHandler
             }
         }
 
-        // No more rewards (or all uncollectable) — proceed
+        // No more rewards (or all uncollectable) — trigger proceed via the game's own handler.
+        // Call OnProceedButtonPressed directly on the rewards screen — this handles ALL cases
+        // (normal combat, boss act transition, victory room, etc.) without us needing to know the logic.
         if (!_proceedTriggered)
         {
             _proceedTriggered = true;
-            Log.Info("[AutoPlay] Rewards: removing overlay + proceeding");
-            NOverlayStack.Instance.Remove(rewardsScreen);
-            TaskHelper.RunSafely(RunManager.Instance.ProceedFromTerminalRewardsScreen());
+            Log.Info("[AutoPlay] Rewards: calling OnProceedButtonPressed");
+
+            // Find the proceed button to pass as argument (the handler ignores it, but signature requires it)
+            var proceedBtn = UiHelper.FindAll<NProceedButton>(screenNode).FirstOrDefault();
+            if (proceedBtn != null)
+            {
+                ((Node)rewardsScreen).Call("OnProceedButtonPressed", proceedBtn);
+            }
+            else
+            {
+                // Fallback: remove overlay + proceed manually
+                Log.Warn("[AutoPlay] Rewards: no proceed button found, using fallback");
+                NOverlayStack.Instance.Remove(rewardsScreen);
+                TaskHelper.RunSafely(RunManager.Instance.ProceedFromTerminalRewardsScreen());
+            }
             await Task.Delay(ActionDelayMs * 4, ct);
         }
         return true;
@@ -216,7 +264,17 @@ public class PhaseHandler
         if (!selected)
         {
             Log.Info("[AutoPlay] Card reward: skipping");
-            await ClickProceed(screen, ct);
+            _cardRewardSkipped = true;
+            // Card reward screen has no proceed button — close it by removing from overlay
+            var overlay = NOverlayStack.Instance;
+            if (overlay != null && overlay.Peek() is NCardRewardSelectionScreen)
+            {
+                overlay.Remove(overlay.Peek()!);
+            }
+            else
+            {
+                await ClickProceed(screen, ct);
+            }
         }
         await Task.Delay(ActionDelayMs, ct);
         return true;
@@ -428,6 +486,16 @@ public class PhaseHandler
         var nMerchantRoom = shopRoom as NMerchantRoom;
         if (nMerchantRoom == null) return false;
 
+        // Open the shop inventory panel if not already open
+        // (entering the merchant room doesn't auto-open it — need to click merchant or call OpenInventory)
+        if (!nMerchantRoom.Inventory.IsOpen)
+        {
+            Log.Info("[AutoPlay] Shop: opening inventory");
+            nMerchantRoom.OpenInventory();
+            await Task.Delay(ActionDelayMs * 2, ct); // Wait for open animation
+            return true; // Let next poll continue once inventory is open
+        }
+
         var merchantRoom = nMerchantRoom.Room as MerchantRoom;
         var inventory = merchantRoom?.Inventory;
         if (inventory == null)
@@ -468,8 +536,15 @@ public class PhaseHandler
             sb.AppendLine($"  [{i}] {item.description} — {item.cost}g {affordable}{(item.onSale ? " (SALE)" : "")}");
         }
         sb.AppendLine();
-        sb.AppendLine("Use shop_buy to purchase items, shop_remove_card to remove a card, or shop_leave when done.");
-        sb.AppendLine("You can buy multiple items. Consider your deck strategy and gold budget.");
+        sb.AppendLine("SHOP STRATEGY:");
+        sb.AppendLine("- Gold has NO value if unspent. Shops are rare — spend aggressively.");
+        sb.AppendLine("- CARD REMOVAL is almost always worth it — thinner decks are stronger.");
+        sb.AppendLine("- Cards on SALE are 20% off — strong value if they fit your deck.");
+        sb.AppendLine("- Relics provide permanent power — prioritize relics over cards when affordable.");
+        sb.AppendLine("- Potions are cheap and can save a run — buy if you have empty slots.");
+        sb.AppendLine("- Only leave gold for future shops if you expect to visit another one soon.");
+        sb.AppendLine();
+        sb.AppendLine("Use shop_buy to purchase, shop_remove_card to remove a card, or shop_leave when done.");
 
         // Agent shop loop
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -530,7 +605,20 @@ public class PhaseHandler
             Log.Info("[AutoPlay] Shop: timeout, leaving");
         }
 
+        // Close the inventory panel first (enables Proceed button)
         await Task.Delay(ActionDelayMs, ct);
+        if (nMerchantRoom.Inventory.IsOpen)
+        {
+            var backBtn = ((Node)nMerchantRoom.Inventory).GetNodeOrNull<NClickableControl>("%BackButton");
+            if (backBtn != null && GodotObject.IsInstanceValid(backBtn))
+            {
+                Log.Info("[AutoPlay] Shop: closing inventory");
+                await UiHelper.Click(backBtn, 100);
+                await Task.Delay(ActionDelayMs, ct);
+            }
+        }
+
+        // Now Proceed button should be enabled
         await ClickProceed(shopRoom, ct);
         return true;
     }
@@ -548,7 +636,7 @@ public class PhaseHandler
             if (!card.IsStocked) continue;
             var c = card.CreationResult?.Card;
             if (c == null) continue;
-            var name = c.Title?.ToString() ?? c.GetType().Name;
+            var name = c.Title ?? c.GetType().Name;
             var up = c.IsUpgraded ? "+" : "";
             var type = c.Type.ToString();
             var rarity = c.Rarity.ToString();
@@ -565,7 +653,7 @@ public class PhaseHandler
             if (!card.IsStocked) continue;
             var c = card.CreationResult?.Card;
             if (c == null) continue;
-            var name = c.Title?.ToString() ?? c.GetType().Name;
+            var name = c.Title ?? c.GetType().Name;
             var up = c.IsUpgraded ? "+" : "";
             var type = c.Type.ToString();
             string desc = "";
@@ -581,9 +669,10 @@ public class PhaseHandler
             if (!relic.IsStocked) continue;
             var r = relic.Model;
             if (r == null) continue;
-            var name = r.Title?.ToString() ?? r.GetType().Name;
-            string desc = "";
-            try { desc = r.Description?.GetFormattedText() ?? ""; }
+            string name, desc = "";
+            try { name = r.Title?.GetRawText() ?? r.GetType().Name; }
+            catch { name = r.GetType().Name; }
+            try { desc = r.Description?.GetRawText() ?? ""; }
             catch { }
             items.Add(new ShopItem("relic", name,
                 $"[Relic] {name} — {desc}", relic.Cost, false, relic));
@@ -594,9 +683,10 @@ public class PhaseHandler
             if (!potion.IsStocked) continue;
             var p = potion.Model;
             if (p == null) continue;
-            var name = p.Title?.ToString() ?? p.GetType().Name;
-            string desc = "";
-            try { desc = p.Description?.GetFormattedText() ?? ""; }
+            string name, desc = "";
+            try { name = p.Title?.GetRawText() ?? p.GetType().Name; }
+            catch { name = p.GetType().Name; }
+            try { desc = p.Description?.GetRawText() ?? ""; }
             catch { }
             items.Add(new ShopItem("potion", name,
                 $"[Potion] {name} — {desc}", potion.Cost, false, potion));
@@ -623,29 +713,22 @@ public class PhaseHandler
         if (item.type == "removal")
             return await ExecuteShopRemoveCard(shopRoom, inventory, ct);
 
-        // Find the matching NMerchantSlot UI node and click it
-        var slots = UiHelper.FindAll<NMerchantSlot>(shopRoom);
-        foreach (var slot in slots)
+        // Call the entry's purchase method directly (UI click doesn't work — MouseReleased vs Released signal mismatch)
+        Log.Info($"[AutoPlay] Shop: buying {item.name} for {item.cost}g");
+        try
         {
-            if (!GodotObject.IsInstanceValid(slot)) continue;
-            try
+            var success = await item.entry.OnTryPurchaseWrapper(inventory, false);
+            if (success)
             {
-                if (slot.Entry == item.entry)
-                {
-                    Log.Info($"[AutoPlay] Shop: buying {item.name} for {item.cost}g");
-                    var hitbox = ((Node)slot).GetNodeOrNull<NClickableControl>("%Hitbox");
-                    if (hitbox != null)
-                    {
-                        await UiHelper.Click(hitbox, 100);
-                        await Task.Delay(ActionDelayMs * 2, ct);
-                        return $"Purchased {item.name} for {item.cost}g.";
-                    }
-                }
+                await Task.Delay(ActionDelayMs * 2, ct);
+                return $"Purchased {item.name} for {item.cost}g.";
             }
-            catch { }
+            return $"Purchase failed for {item.name} — not enough gold or item unavailable.";
         }
-
-        return $"Could not find shop slot for {item.name}. It may have been sold out.";
+        catch (Exception ex)
+        {
+            return $"Purchase error for {item.name}: {ex.Message}";
+        }
     }
 
     private async Task<string> ExecuteShopRemoveCard(Node shopRoom, MerchantInventory inventory, CancellationToken ct)
@@ -653,21 +736,22 @@ public class PhaseHandler
         if (inventory.CardRemovalEntry == null || !inventory.CardRemovalEntry.IsStocked)
             return "Card removal service is not available.";
 
-        // Find and click the removal slot
-        var removalSlots = UiHelper.FindAll<NMerchantCardRemoval>(shopRoom);
-        foreach (var slot in removalSlots)
+        Log.Info($"[AutoPlay] Shop: using card removal for {inventory.CardRemovalEntry.Cost}g");
+        try
         {
-            if (!GodotObject.IsInstanceValid(slot)) continue;
-            Log.Info($"[AutoPlay] Shop: using card removal for {inventory.CardRemovalEntry.Cost}g");
-            var hitbox = ((Node)slot).GetNodeOrNull<NClickableControl>("%Hitbox");
-            if (hitbox == null) return "Could not find card removal hitbox.";
-            await UiHelper.Click(hitbox, 100);
+            var success = await inventory.CardRemovalEntry.OnTryPurchaseWrapper(inventory, false);
+            if (!success) return "Card removal failed — not enough gold.";
+            await Task.Delay(ActionDelayMs * 3, ct);
+            // Card selection overlay will appear — handled by the phase loop
+            return $"Card removal initiated ({inventory.CardRemovalEntry.Cost}g). Select a card to remove.";
             await Task.Delay(ActionDelayMs * 3, ct);
             // Card selection overlay will appear — handled by the phase loop
             return $"Card removal initiated ({inventory.CardRemovalEntry.Cost}g). Select a card to remove.";
         }
-
-        return "Could not find card removal service in shop.";
+        catch (Exception ex)
+        {
+            return $"Card removal error: {ex.Message}";
+        }
     }
 
     #endregion
@@ -941,15 +1025,31 @@ public class PhaseHandler
             summary.Gold = player.Gold;
             summary.Floor = runState!.TotalFloor;
             summary.Act = runState.CurrentActIndex + 1;
-            summary.Relics = player.Relics.Select(r => r.Title?.ToString() ?? r.GetType().Name).ToList();
-            summary.Potions = player.Potions.Select(p => p.Title?.ToString() ?? p.GetType().Name).ToList();
+            summary.Relics = player.Relics.Select(r =>
+            {
+                var name = r.Title?.GetRawText() ?? r.GetType().Name;
+                string desc = "";
+                try { desc = r.Description?.GetRawText() ?? ""; }
+                catch { }
+                return string.IsNullOrEmpty(desc) ? name : $"{name} ({desc})";
+            }).ToList();
+            summary.Potions = player.Potions.Select(p =>
+            {
+                var name = p.Title?.GetRawText() ?? p.GetType().Name;
+                string desc = "";
+                try { desc = p.Description?.GetRawText() ?? ""; }
+                catch { }
+                return string.IsNullOrEmpty(desc) ? name : $"{name} ({desc})";
+            }).ToList();
+            summary.PotionSlots = player.Potions.Count();
+            summary.PotionSlotsMax = player.MaxPotionCount;
 
             var pcs = player.PlayerCombatState;
             if (pcs != null)
             {
                 summary.DeckCards = pcs.AllCards.Select(c =>
                 {
-                    var name = c.Title?.ToString() ?? c.GetType().Name;
+                    var name = c.Title ?? c.GetType().Name;
                     var up = c.IsUpgraded ? "+" : "";
                     var cost = c.EnergyCost?.GetAmountToSpend() ?? 0;
                     return $"{name}{up} ({cost} {c.Type})";
@@ -963,7 +1063,7 @@ public class PhaseHandler
     private static string FormatCard(CardModel? card)
     {
         if (card == null) return "Unknown";
-        var name = card.Title?.ToString() ?? card.GetType().Name;
+        var name = card.Title ?? card.GetType().Name;
         var upgraded = card.IsUpgraded ? "+" : "";
         var cost = card.EnergyCost?.GetAmountToSpend() ?? 0;
         var type = card.Type.ToString();

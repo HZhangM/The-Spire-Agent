@@ -117,6 +117,12 @@ public class BackgroundMemoryWriter
                 {
                     _store.AppendStrategy("character", $"Run #{runId} ({result}): {lessons[0]}");
                 }
+
+                // Auto-generate/update archetype if identified
+                if (!string.IsNullOrEmpty(archetype) && archetype != "Unknown" && archetype != "Hybrid/Undefined")
+                {
+                    await UpdateArchetype(archetype, run);
+                }
             }
             catch (Exception ex)
             {
@@ -320,14 +326,18 @@ public class BackgroundMemoryWriter
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
+            // LLM may return strings or objects in arrays — handle both
+            static string ElementToString(JsonElement x) =>
+                x.ValueKind == JsonValueKind.String ? (x.GetString() ?? "") : x.GetRawText().Trim('"');
+
             var observations = root.TryGetProperty("observations", out var obs)
-                ? obs.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+                ? obs.EnumerateArray().Select(ElementToString).Where(x => x.Length > 0).ToList()
                 : entry.Observations;
             var synergies = root.TryGetProperty("synergies", out var syn)
-                ? syn.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+                ? syn.EnumerateArray().Select(ElementToString).Where(x => x.Length > 0).ToList()
                 : null;
             var antiSynergies = root.TryGetProperty("anti_synergies", out var asyn)
-                ? asyn.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+                ? asyn.EnumerateArray().Select(ElementToString).Where(x => x.Length > 0).ToList()
                 : null;
             var rating = root.TryGetProperty("rating", out var r) ? (int?)r.GetInt32() : null;
 
@@ -341,6 +351,66 @@ public class BackgroundMemoryWriter
     }
 
     #endregion
+
+    private async Task UpdateArchetype(string archetypeName, RunEntry run)
+    {
+        try
+        {
+            var existing = _store.ReadArchetype(archetypeName);
+
+            var prompt = $"""
+                Update the archetype entry for "{archetypeName}" based on this run.
+                Run result: {run.Result} at floor {run.FinalFloor}
+                Lessons: {string.Join("; ", run.Lessons)}
+
+                {(existing != null ? $"Existing data:\n  Core cards: {string.Join(", ", existing.CoreCards)}\n  Strengths: {string.Join("; ", existing.Strengths)}\n  Weaknesses: {string.Join("; ", existing.Weaknesses)}\n  Observations: {string.Join("; ", existing.Observations)}" : "No existing data — create new entry.")}
+
+                Return JSON with:
+                - name: string (archetype name)
+                - description: string (one-line description)
+                - core_cards: string[] (key cards for this archetype)
+                - support_cards: string[] (good supporting cards)
+                - strengths: string[] (what this archetype does well)
+                - weaknesses: string[] (vulnerabilities)
+                - observations: string[] (1-3 key lessons about playing this archetype)
+                - win_rate_note: string (brief assessment)
+                """;
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var response = await _client.CompleteAsync(
+                "Return ONLY valid JSON.", prompt, cts.Token);
+
+            var json = ExtractJsonFromResponse(response);
+            if (json == null) return;
+
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            static string Str(JsonElement root, string key, string fallback = "") =>
+                root.TryGetProperty(key, out var v) ? (v.GetString() ?? fallback) : fallback;
+            static List<string> StrArray(JsonElement root, string key) =>
+                root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Array
+                    ? v.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.String ? (x.GetString() ?? "") : x.GetRawText()).Where(x => x.Length > 0).ToList()
+                    : [];
+
+            var archetype = existing ?? new ArchetypeEntry();
+            archetype.Name = Str(root, "name", archetypeName);
+            archetype.Description = Str(root, "description", archetype.Description);
+            archetype.CoreCards = StrArray(root, "core_cards").Count > 0 ? StrArray(root, "core_cards") : archetype.CoreCards;
+            archetype.SupportCards = StrArray(root, "support_cards").Count > 0 ? StrArray(root, "support_cards") : archetype.SupportCards;
+            archetype.Strengths = StrArray(root, "strengths").Count > 0 ? StrArray(root, "strengths") : archetype.Strengths;
+            archetype.Weaknesses = StrArray(root, "weaknesses").Count > 0 ? StrArray(root, "weaknesses") : archetype.Weaknesses;
+            archetype.Observations = StrArray(root, "observations").Count > 0 ? StrArray(root, "observations") : archetype.Observations;
+            archetype.WinRateNote = Str(root, "win_rate_note", archetype.WinRateNote);
+
+            _store.SaveArchetype(archetype);
+            Log.Info($"[Memory/BG] Archetype '{archetypeName}' saved/updated");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"[Memory/BG] Archetype update failed: {ex.Message}");
+        }
+    }
 
     private static string? ExtractJsonFromResponse(string response) => JsonUtils.ExtractJson(response);
 }

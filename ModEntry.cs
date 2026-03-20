@@ -183,6 +183,7 @@ public class ModEntry
         };
         AutoPlayer.Handler.Advisor = advisor;
         AutoPlayer.Handler.CombatAgent = agent;
+        agent.OnThinkingChanged = (thinking) => AutoPlayer.StatusOverlay.IsThinking = thinking;
         AutoPlayer.ContextExtractor = new Core.RunContextExtractor(AutoPlayer.RunContext, client);
         AutoPlayer.BackgroundWriter = bgWriter;
     }

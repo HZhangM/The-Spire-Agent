@@ -25,6 +25,9 @@ public class UnifiedGameAgent
     public BattleJournal? Journal { get; set; }
     public MemoryStore? Memory { get; set; }
 
+    /// <summary>Callback to update UI status (Vibing/not). Set by AutoPlayer.</summary>
+    public Action<bool>? OnThinkingChanged { get; set; }
+
     // No artificial query limit — the agent queries as much as it needs.
     // The caller's CancellationToken timeout (typically 30s) is the natural safeguard.
 
@@ -51,6 +54,10 @@ public class UnifiedGameAgent
     /// </summary>
     public void StartCombatSession()
     {
+        // Save previous non-combat session if any
+        if (_inNonCombatSession)
+            _ = SaveConversationLog($"noncombat_{_nonCombatCount:D3}");
+
         _inCombatSession = true;
         _inNonCombatSession = false;
         _combatCount++;
@@ -64,6 +71,12 @@ public class UnifiedGameAgent
     /// </summary>
     public void StartNonCombatSession(string initialContext = "")
     {
+        // Save previous session if any
+        if (_inCombatSession)
+            _ = SaveConversationLog($"combat_{_combatCount:D3}_incomplete");
+        if (_inNonCombatSession)
+            _ = SaveConversationLog($"noncombat_{_nonCombatCount:D3}");
+
         _inNonCombatSession = true;
         _inCombatSession = false;
         _nonCombatCount++;
@@ -97,7 +110,8 @@ public class UnifiedGameAgent
     /// Returns (toolName, toolInput) or null if no action tool was called.
     /// </summary>
     public async Task<(string toolName, JsonElement input)?> RunAgentLoop(
-        string userMessage, JsonElement[] actionTools, string systemPrompt, CancellationToken ct)
+        string userMessage, JsonElement[] actionTools, string systemPrompt, CancellationToken ct,
+        bool includeMemoryTools = true)
     {
         try
         {
@@ -116,7 +130,7 @@ public class UnifiedGameAgent
 
         try
         {
-            return await RunAgentLoopInternal(userMessage, actionTools, systemPrompt, ct);
+            return await RunAgentLoopInternal(userMessage, actionTools, systemPrompt, ct, includeMemoryTools);
         }
         catch (OperationCanceledException)
         {
@@ -132,19 +146,30 @@ public class UnifiedGameAgent
     }
 
     private async Task<(string toolName, JsonElement input)?> RunAgentLoopInternal(
-        string userMessage, JsonElement[] actionTools, string systemPrompt, CancellationToken ct)
+        string userMessage, JsonElement[] actionTools, string systemPrompt, CancellationToken ct,
+        bool includeMemoryTools = true)
     {
         // Combine action tools + query tools into one set
-        var allTools = BuildToolSet(actionTools);
+        var allTools = BuildToolSet(actionTools, includeMemoryTools);
         string currentMessage = userMessage;
         int recallCount = 0;
+        bool recallDisabled = false;
         const int MaxRecallBeforeThrottle = 6;
 
         // Loop until the agent chooses an action tool.
         // The caller's CancellationToken timeout is the safeguard against infinite loops.
         while (!ct.IsCancellationRequested)
         {
-            var result = await _client.SendMessageAsync(systemPrompt, currentMessage, allTools, ct);
+            OnThinkingChanged?.Invoke(true);
+            (string toolName, JsonElement input, string toolUseId)? result;
+            try
+            {
+                result = await _client.SendMessageAsync(systemPrompt, currentMessage, allTools, ct);
+            }
+            finally
+            {
+                OnThinkingChanged?.Invoke(false);
+            }
 
             if (!result.HasValue)
             {
@@ -177,19 +202,26 @@ public class UnifiedGameAgent
                 var queryResult = HandleQueryTool(toolName, input);
                 _client.SetPendingToolResult(toolUseId, queryResult);
 
-                // Track recall_memory usage — after too many, remove it from tool set
+                // Throttle recall_memory — after too many calls, return error as tool_result
+                // AND remove recall_memory + save_memory from tool set
                 if (toolName == "recall_memory")
                 {
                     recallCount++;
-                    if (recallCount >= MaxRecallBeforeThrottle)
+                    if (recallCount > MaxRecallBeforeThrottle)
                     {
-                        Log.Info("[AutoPlay/Agent] Too many recall_memory calls, removing from tool set");
-                        allTools = allTools.Where(t =>
+                        if (!recallDisabled)
                         {
-                            try { return t.GetProperty("name").GetString() != "recall_memory"; }
-                            catch { return true; }
-                        }).ToArray();
-                        currentMessage = queryResult + "\n\n⚠ recall_memory has been disabled. Make your decision now with the information you have.";
+                            recallDisabled = true;
+                            allTools = allTools.Where(t =>
+                                !t.GetRawText().Contains("\"recall_memory\"") &&
+                                !t.GetRawText().Contains("\"save_memory\"")
+                            ).ToArray();
+                            Log.Info($"[AutoPlay/Agent] recall_memory disabled, removed from tools. Remaining: {allTools.Length}");
+                        }
+                        // Still return a proper tool_result so the conversation stays valid
+                        _client.SetPendingToolResult(toolUseId,
+                            "ERROR: recall_memory is disabled. You have queried enough. CHOOSE AN ACTION NOW.");
+                        currentMessage = "recall_memory is disabled. Choose an action.";
                         continue;
                     }
                 }
@@ -252,12 +284,23 @@ public class UnifiedGameAgent
     /// <summary>
     /// Build the combined tool set: action tools + query tools appropriate for the context.
     /// </summary>
-    private JsonElement[] BuildToolSet(JsonElement[] actionTools)
+    private JsonElement[] BuildToolSet(JsonElement[] actionTools, bool includeMemoryTools = true)
     {
         var tools = new List<JsonElement>(actionTools);
 
-        // Add universal query tools
-        tools.AddRange(ToolDefinitions.QueryTools);
+        // Add query tools — optionally exclude memory tools for decisions
+        // where all info is already in the prompt
+        if (includeMemoryTools)
+        {
+            tools.AddRange(ToolDefinitions.QueryTools);
+        }
+        else
+        {
+            // Only include non-memory query tools (deck inspection, etc.)
+            tools.AddRange(ToolDefinitions.QueryTools.Where(t =>
+                !t.GetRawText().Contains("\"recall_memory\"") &&
+                !t.GetRawText().Contains("\"save_memory\"")));
+        }
 
         // Add combat-only query tools when in combat
         if (_inCombatSession)
@@ -323,10 +366,10 @@ public class UnifiedGameAgent
             foreach (var relic in player.Relics)
             {
                 string desc = "";
-                try { desc = relic.DynamicDescription?.GetFormattedText() ?? relic.Description?.GetFormattedText() ?? ""; }
+                try { desc = relic.Description?.GetRawText() ?? ""; }
                 catch { }
 
-                var name = relic.Title?.ToString() ?? relic.GetType().Name;
+                var name = relic.Title?.GetRawText() ?? relic.GetType().Name;
                 var counter = relic.DisplayAmount > 0 ? $" [{relic.DisplayAmount}]" : "";
                 relics.Add($"  {name}{counter} - {desc}");
             }
@@ -357,7 +400,7 @@ public class UnifiedGameAgent
             sb.AppendLine($"Full deck ({cards.Count} cards):");
             foreach (var card in cards)
             {
-                var name = card.Title?.ToString() ?? card.GetType().Name;
+                var name = card.Title ?? card.GetType().Name;
                 var upgraded = card.IsUpgraded ? "+" : "";
                 var cost = card.EnergyCost?.GetAmountToSpend() ?? 0;
                 var type = card.Type.ToString();
@@ -462,10 +505,26 @@ public class UnifiedGameAgent
             if (names.Count > 0)
             {
                 var results = new List<string>();
+                bool anyMiss = false;
                 foreach (var entityName in names)
                 {
                     var entry = Memory.Read(category, entityName);
-                    results.Add(entry != null ? entry.ToInjectionString() : $"No memory for {category} '{entityName}'.");
+                    if (entry != null)
+                        results.Add(entry.ToInjectionString());
+                    else
+                    {
+                        results.Add($"No memory for {category} '{entityName}'.");
+                        anyMiss = true;
+                    }
+                }
+                // On any miss, show what IS available so agent can use correct names or stop guessing
+                if (anyMiss)
+                {
+                    var available = Memory.GetEntityNames(category);
+                    if (available.Count > 0)
+                        results.Add($"Available {category} memories: {string.Join(", ", available.Take(30))}");
+                    else
+                        results.Add($"No {category} memories exist yet — this knowledge will accumulate over time.");
                 }
                 return string.Join("\n\n", results);
             }
@@ -473,7 +532,13 @@ public class UnifiedGameAgent
             if (!string.IsNullOrEmpty(keyword))
             {
                 var results = Memory.Search(category, keyword);
-                if (results.Count == 0) return $"No {category} memories matching '{keyword}'.";
+                if (results.Count == 0)
+                {
+                    var available = Memory.GetEntityNames(category);
+                    if (available.Count > 0)
+                        return $"No {category} memories matching '{keyword}'. Available: {string.Join(", ", available.Take(30))}";
+                    return $"No {category} memories exist yet.";
+                }
                 return string.Join("\n\n", results.Take(10).Select(e => e.ToInjectionString()));
             }
 
@@ -500,6 +565,26 @@ public class UnifiedGameAgent
 
         try
         {
+            // Validate relic names against player's actual relics
+            if (category == "relic")
+            {
+                var validRelicNames = GetCurrentRelicNames();
+                if (validRelicNames.Count > 0 && !validRelicNames.Any(r =>
+                    r.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                    AutoPlayMod.Memory.MemoryStore.SanitizeName(r) == AutoPlayMod.Memory.MemoryStore.SanitizeName(name)))
+                {
+                    return $"Rejected: '{name}' is not a valid relic name. " +
+                           $"Your relics: {string.Join(", ", validRelicNames)}. Use the EXACT relic name.";
+                }
+            }
+
+            // Reject agent-written archetypes — archetypes are auto-generated from run data
+            if (category == "archetype")
+            {
+                return "Rejected: archetypes are auto-generated from completed runs. " +
+                       "Use save_memory with category 'strategy' for strategic insights instead.";
+            }
+
             if (category == "strategy")
             {
                 // Reject run-specific observations (floor numbers, specific HP values, etc.)
@@ -522,6 +607,19 @@ public class UnifiedGameAgent
         {
             return $"Error saving memory: {ex.Message}";
         }
+    }
+
+    /// <summary>Get current player's relic names from game state.</summary>
+    private static List<string> GetCurrentRelicNames()
+    {
+        try
+        {
+            var runState = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
+            var player = runState?.Players.FirstOrDefault();
+            if (player == null) return [];
+            return player.Relics.Select(r => r.Title?.GetRawText() ?? r.GetType().Name).ToList();
+        }
+        catch { return []; }
     }
 
     /// <summary>Compute deck statistics.</summary>

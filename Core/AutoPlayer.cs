@@ -17,6 +17,7 @@ public class AutoPlayer
     public RunContext RunContext { get; } = new();
     public RunContextExtractor? ContextExtractor { get; set; }
     public Memory.BackgroundMemoryWriter? BackgroundWriter { get; set; }
+    public AgentStatusOverlay StatusOverlay { get; } = new();
 
     private CancellationTokenSource? _cts;
     private bool _isRunning;
@@ -50,6 +51,8 @@ public class AutoPlayer
 
         if (IsEnabled)
         {
+            StatusOverlay.Initialize();
+            StatusOverlay.IsActive = ActiveStrategy is Agent.AgentStrategy;
             Start();
 
             // If toggled on mid-combat during player turn, start playing
@@ -62,6 +65,7 @@ public class AutoPlayer
         }
         else
         {
+            StatusOverlay.IsActive = false;
             Stop();
         }
     }
@@ -104,7 +108,10 @@ public class AutoPlayer
 
         try
         {
-            using var cts = new CancellationTokenSource();
+            // Link to main CTS so Toggle-off cancels in-progress turns
+            using var cts = _cts != null
+                ? CancellationTokenSource.CreateLinkedTokenSource(_cts.Token)
+                : new CancellationTokenSource();
             var ct = cts.Token;
             int actionsPlayed = 0;
 
@@ -162,6 +169,25 @@ public class AutoPlayer
                 }
 
                 await Task.Delay(300, ct);
+
+                // After killing enemies, new ones may spawn (e.g. slimes splitting).
+                // If all enemies appear dead but combat is still in progress, wait for spawn.
+                if (CombatManager.Instance.IsInProgress)
+                {
+                    var checkState = BattleStateCollector.Collect();
+                    if (checkState != null && checkState.Enemies.All(e => !e.IsAlive))
+                    {
+                        Log.Info("[AutoPlay] All enemies dead but combat ongoing — waiting for spawns");
+                        for (int waitSpawn = 0; waitSpawn < 20; waitSpawn++)
+                        {
+                            await Task.Delay(300, ct);
+                            checkState = BattleStateCollector.Collect();
+                            if (checkState == null) break;
+                            if (checkState.Enemies.Any(e => e.IsAlive)) break;
+                            if (!CombatManager.Instance.IsInProgress) break;
+                        }
+                    }
+                }
             }
         }
         catch (Exception ex)

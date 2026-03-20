@@ -113,8 +113,16 @@ public class RunContextExtractor
         }
 
         prompt.AppendLine();
+        prompt.AppendLine("Known Ironclad archetypes (identify which one this deck is building toward):");
+        prompt.AppendLine("  - Strength Build: Inflame, Spot Weakness, Limit Break, Heavy Blade, Sword Boomerang");
+        prompt.AppendLine("  - Exhaust Engine: Feel No Pain, Dark Embrace, Corruption, Burning Pact, Fiend Fire");
+        prompt.AppendLine("  - Block/Barricade: Barricade, Entrench, Body Slam, Impervious, Shrug It Off");
+        prompt.AppendLine("  - Self-Damage: Rupture, Combust, Bloodletting, Brutality, Hemokinesis");
+        prompt.AppendLine("  - Attack Spam: Perfected Strike, Anger, Pummel, Whirlwind, Rage");
+        prompt.AppendLine("  - Hybrid/Undefined: no clear archetype yet (early game or mixed strategy)");
+        prompt.AppendLine();
         prompt.AppendLine("Return JSON with:");
-        prompt.AppendLine("- archetype: string (deck archetype name, e.g. 'Strength Build', 'Block Engine')");
+        prompt.AppendLine("- archetype: string (one of the above names, or 'Hybrid/Undefined' if unclear)");
         prompt.AppendLine("- goals: string[] (1-3 current strategic goals)");
         prompt.AppendLine("- strategy_note: string (one-line strategy summary)");
 
@@ -215,7 +223,7 @@ public class RunContextExtractor
 
             var cards = pcs.AllCards.Select(c =>
             {
-                var name = c.Title?.ToString() ?? c.GetType().Name;
+                var name = c.Title ?? c.GetType().Name;
                 var up = c.IsUpgraded ? "+" : "";
                 return $"{name}{up}";
             });

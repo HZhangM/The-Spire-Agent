@@ -131,7 +131,7 @@ public static class BattleStateCollector
             {
                 Index = idx,
                 Id = card.GetType().Name,
-                Name = card.Title?.ToString() ?? card.GetType().Name,
+                Name = card.Title ?? card.GetType().Name,
                 Description = desc,
                 Cost = card.EnergyCost?.GetAmountToSpend() ?? 0,
                 Type = card.Type.ToString(),
@@ -152,14 +152,14 @@ public static class BattleStateCollector
             if (slot != null)
             {
                 string potionDesc = "";
-                try { potionDesc = slot.DynamicDescription?.ToString() ?? slot.Description?.ToString() ?? ""; }
+                try { potionDesc = slot.Description?.GetRawText() ?? ""; }
                 catch { }
 
                 potions.Add(new PotionState
                 {
                     Index = idx,
                     Id = slot.GetType().Name,
-                    Name = slot.Title?.ToString() ?? slot.GetType().Name,
+                    Name = slot.Title?.GetRawText() ?? slot.GetType().Name,
                     Description = potionDesc,
                     TargetType = slot.TargetType.ToString(),
                 });
@@ -175,13 +175,13 @@ public static class BattleStateCollector
         foreach (var relic in player.Relics)
         {
             string relicDesc = "";
-            try { relicDesc = relic.DynamicDescription?.GetFormattedText() ?? relic.Description?.GetFormattedText() ?? ""; }
+            try { relicDesc = relic.Description?.GetRawText() ?? ""; }
             catch { }
 
             relics.Add(new RelicState
             {
                 Id = relic.GetType().Name,
-                Name = relic.Title?.ToString() ?? relic.GetType().Name,
+                Name = relic.Title?.GetRawText() ?? relic.GetType().Name,
                 Description = relicDesc,
                 Counter = relic.DisplayAmount,
             });
@@ -199,7 +199,7 @@ public static class BattleStateCollector
             {
                 // Use plain Description to avoid SmartFormat errors
                 // (SmartDescription needs context variables not available here)
-                powerDesc = power.Description?.GetFormattedText() ?? "";
+                powerDesc = power.Description?.GetRawText() ?? "";
             }
             catch
             {
@@ -209,7 +209,7 @@ public static class BattleStateCollector
             powers.Add(new PowerState
             {
                 Id = power.GetType().Name,
-                Name = power.Title?.ToString() ?? power.GetType().Name,
+                Name = power.Title?.GetRawText() ?? power.GetType().Name,
                 Description = powerDesc,
                 Amount = power.Amount,
             });
@@ -248,7 +248,7 @@ public static class BattleStateCollector
             {
                 Index = idx,
                 Id = card.GetType().Name,
-                Name = card.Title?.ToString() ?? card.GetType().Name,
+                Name = card.Title ?? card.GetType().Name,
                 Description = desc,
                 Cost = card.EnergyCost?.GetAmountToSpend() ?? 0,
                 Type = card.Type.ToString(),

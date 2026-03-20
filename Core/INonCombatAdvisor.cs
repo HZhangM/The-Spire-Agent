@@ -69,4 +69,6 @@ public class GameSummary
     public List<string> Relics { get; set; } = [];
     public List<string> DeckCards { get; set; } = [];
     public List<string> Potions { get; set; } = [];
+    public int PotionSlots { get; set; }
+    public int PotionSlotsMax { get; set; }
 }

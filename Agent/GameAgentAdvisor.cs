@@ -115,11 +115,14 @@ public class GameAgentAdvisor : INonCombatAdvisor
         var purposeDesc = context.Purpose switch
         {
             CardSelectionPurpose.Reward => """
-                Card REWARD: Choose a card to ADD to your deck.
-                THINK about: Does this card synergize with my deck's strategy?
-                A focused deck (fewer, better cards) beats a bloated deck.
-                Skipping is often correct if none of the cards improve your deck.
-                Consider: What archetype is my deck building toward? (Strength, Block, Exhaust, etc.)
+                Card REWARD: Choose a card to ADD to your deck, or skip.
+                All card descriptions are shown below. Your deck, relics, and run context are above.
+                You have ALL the information needed — decide based on what you see.
+                Guidelines:
+                - Does this card fit your current archetype/strategy?
+                - A focused deck beats a bloated deck — skip if nothing fits.
+                - Early game: strong attacks. Mid game: powers/scaling. Late game: skip weak cards.
+                DO NOT spend time querying memory — the card descriptions tell you everything.
                 """,
             CardSelectionPurpose.UpgradeInHand =>
                 "UPGRADE a card in your hand (mid-combat). Pick the one with the biggest upgrade impact.",
@@ -145,7 +148,8 @@ public class GameAgentAdvisor : INonCombatAdvisor
                 prompt += $"\n\n=== CARD KNOWLEDGE (from memory) ===\n{cardMemories}";
         }
 
-        var result = await CallAgent(prompt, ToolDefinitions.CardSelectionTools);
+        // All card info + memories already injected — no need for recall_memory
+        var result = await CallAgent(prompt, ToolDefinitions.CardSelectionTools, includeMemoryTools: false);
         if (result.HasValue)
         {
             var (toolName, input) = result.Value;
@@ -162,7 +166,8 @@ public class GameAgentAdvisor : INonCombatAdvisor
         return 0;
     }
 
-    private async Task<(string toolName, JsonElement input)?> CallAgent(string userPrompt, JsonElement[] actionTools)
+    private async Task<(string toolName, JsonElement input)?> CallAgent(string userPrompt, JsonElement[] actionTools,
+        bool includeMemoryTools = true)
     {
         try
         {
@@ -171,7 +176,8 @@ public class GameAgentAdvisor : INonCombatAdvisor
             // Multi-turn agent (preferred — has query tools + conversation history)
             if (_agent != null)
             {
-                return await _agent.RunAgentLoop(userPrompt, actionTools, Prompts.NonCombatSystem, cts.Token);
+                return await _agent.RunAgentLoop(userPrompt, actionTools, Prompts.NonCombatSystem, cts.Token,
+                    includeMemoryTools);
             }
 
             // Single-shot tool call (no agent)
@@ -198,12 +204,23 @@ public class GameAgentAdvisor : INonCombatAdvisor
         sb.AppendLine($"HP: {summary.Hp}/{summary.MaxHp} | Gold: {summary.Gold} | Floor: {summary.Floor} | Act: {summary.Act}");
         sb.AppendLine($"Deck ({summary.DeckCards.Count} cards): {string.Join(", ", summary.DeckCards.Take(25))}{(summary.DeckCards.Count > 25 ? "..." : "")}");
         sb.AppendLine($"Relics: {(summary.Relics.Count > 0 ? string.Join(", ", summary.Relics) : "none")}");
-        sb.AppendLine($"Potions: {(summary.Potions.Count > 0 ? string.Join(", ", summary.Potions) : "none")}");
+        var potionStatus = summary.PotionSlotsMax > 0
+            ? $"Potions ({summary.PotionSlots}/{summary.PotionSlotsMax} slots): {(summary.Potions.Count > 0 ? string.Join(", ", summary.Potions) : "empty")}"
+            : $"Potions: {(summary.Potions.Count > 0 ? string.Join(", ", summary.Potions) : "none")}";
+        sb.AppendLine(potionStatus);
 
         // Inject run context
         var runCtx = RunContext?.ToInjectionString() ?? "";
         if (!string.IsNullOrEmpty(runCtx))
             sb.AppendLine($"\n{runCtx}");
+
+        // Inject memory index so agent knows what's available (avoids blind searching)
+        if (Memory != null)
+        {
+            var idx = Memory.GetMemoryIndex();
+            if (!string.IsNullOrEmpty(idx))
+                sb.AppendLine($"\n{idx}");
+        }
 
         return sb.ToString();
     }

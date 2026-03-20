@@ -274,7 +274,7 @@ public class AgentStrategy : IPlayStrategy
                     var pcs = runState?.Players.FirstOrDefault()?.PlayerCombatState;
                     if (pcs != null)
                         foreach (var card in pcs.AllCards)
-                            deckCardNames.Add(card.Title?.ToString() ?? card.GetType().Name);
+                            deckCardNames.Add(card.Title ?? card.GetType().Name);
                 }
                 catch { }
                 var cardMemories = memory.GetForInjection("card", deckCardNames, 500);
