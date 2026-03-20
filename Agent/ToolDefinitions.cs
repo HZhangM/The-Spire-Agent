@@ -128,6 +128,46 @@ public static class ToolDefinitions
     }
     """).RootElement;
 
+    // ==================== SHOP TOOLS ====================
+
+    public static readonly JsonElement ShopBuy = JsonDocument.Parse("""
+    {
+        "name": "shop_buy",
+        "description": "Buy an item from the shop (card, relic, or potion). Check if you have enough gold first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item_index": { "type": "integer", "description": "0-based index of the item in the shop listing" }
+            },
+            "required": ["item_index"]
+        }
+    }
+    """).RootElement;
+
+    public static readonly JsonElement ShopRemoveCard = JsonDocument.Parse("""
+    {
+        "name": "shop_remove_card",
+        "description": "Use the card removal service to permanently remove a card from your deck. Costs gold (increases each use).",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+    """).RootElement;
+
+    public static readonly JsonElement ShopLeave = JsonDocument.Parse("""
+    {
+        "name": "shop_leave",
+        "description": "Leave the shop without buying anything else.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+    """).RootElement;
+
     // ==================== REFLECTION TOOLS ====================
 
     public static readonly JsonElement Reflection = JsonDocument.Parse("""
@@ -345,6 +385,7 @@ public static class ToolDefinitions
     public static JsonElement[] EventTools => [ChooseEventOption];
     public static JsonElement[] CardSelectionTools => [ChooseCard, SkipCardReward];
     public static JsonElement[] RestSiteTools => [ChooseRestOption];
+    public static JsonElement[] ShopTools => [ShopBuy, ShopRemoveCard, ShopLeave];
     public static JsonElement[] GenericTools => [Proceed];
 
     /// <summary>All query tool names for quick lookup.</summary>

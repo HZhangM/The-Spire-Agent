@@ -22,6 +22,8 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Entities.Merchant;
+using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 
 namespace AutoPlayMod.Core;
 
@@ -422,12 +424,253 @@ public class PhaseHandler
         var shopRoom = game.GetNodeOrNull("/root/Game/RootSceneContainer/Run/RoomContainer/MerchantRoom");
         if (shopRoom == null) return false;
 
-        // TODO: implement shop agent (buy cards/relics/potions, remove cards)
-        Log.Info("[AutoPlay] Shop: no purchase logic yet, leaving");
-        await Task.Delay(ActionDelayMs * 2, ct);
+        // Get the merchant room model
+        var nMerchantRoom = shopRoom as NMerchantRoom;
+        if (nMerchantRoom == null) return false;
+
+        var merchantRoom = nMerchantRoom.Room as MerchantRoom;
+        var inventory = merchantRoom?.Inventory;
+        if (inventory == null)
+        {
+            Log.Info("[AutoPlay] Shop: no inventory, leaving");
+            await ClickProceed(shopRoom, ct);
+            return true;
+        }
+
+        // If no agent, just leave
+        if (CombatAgent == null)
+        {
+            Log.Info("[AutoPlay] Shop: no agent, leaving");
+            await ClickProceed(shopRoom, ct);
+            return true;
+        }
+
+        // Collect shop items and build prompt
+        var shopItems = CollectShopItems(inventory);
+        if (shopItems.Count == 0)
+        {
+            await ClickProceed(shopRoom, ct);
+            return true;
+        }
+
+        var summary = CollectGameSummary();
+        var sb = new StringBuilder();
+        sb.AppendLine($"HP: {summary.Hp}/{summary.MaxHp} | Gold: {summary.Gold} | Floor: {summary.Floor} | Act: {summary.Act}");
+        sb.AppendLine($"Deck ({summary.DeckCards.Count} cards): {string.Join(", ", summary.DeckCards.Take(20))}");
+        sb.AppendLine($"Relics: {string.Join(", ", summary.Relics)}");
+        sb.AppendLine($"Potions: {string.Join(", ", summary.Potions)}");
+        sb.AppendLine();
+        sb.AppendLine("=== SHOP ===");
+        for (int i = 0; i < shopItems.Count; i++)
+        {
+            var item = shopItems[i];
+            var affordable = summary.Gold >= item.cost ? "✓" : "✗";
+            sb.AppendLine($"  [{i}] {item.description} — {item.cost}g {affordable}{(item.onSale ? " (SALE)" : "")}");
+        }
+        sb.AppendLine();
+        sb.AppendLine("Use shop_buy to purchase items, shop_remove_card to remove a card, or shop_leave when done.");
+        sb.AppendLine("You can buy multiple items. Consider your deck strategy and gold budget.");
+
+        // Agent shop loop
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, cts.Token);
+
+        try
+        {
+            var result = await CombatAgent.RunAgentLoop(
+                sb.ToString(), Agent.ToolDefinitions.ShopTools, Agent.Prompts.NonCombatSystem, linked.Token);
+
+            while (result.HasValue)
+            {
+                var (toolName, input) = result.Value;
+                string toolResult;
+
+                if (toolName == "shop_leave")
+                {
+                    Log.Info("[AutoPlay] Shop: agent chose to leave");
+                    break;
+                }
+                else if (toolName == "shop_buy")
+                {
+                    var itemIdx = input.GetProperty("item_index").GetInt32();
+                    toolResult = await ExecuteShopBuy(shopRoom, inventory, shopItems, itemIdx, ct);
+                }
+                else if (toolName == "shop_remove_card")
+                {
+                    toolResult = await ExecuteShopRemoveCard(shopRoom, inventory, ct);
+                }
+                else
+                {
+                    toolResult = $"Unknown shop action: {toolName}";
+                }
+
+                Log.Info($"[AutoPlay] Shop: {toolName} → {toolResult}");
+
+                // Refresh shop state for next decision
+                shopItems = CollectShopItems(inventory);
+                var gold = RunManager.Instance?.DebugOnlyGetState()?.Players.FirstOrDefault()?.Gold ?? 0;
+                var refreshMsg = $"{toolResult}\n\nGold remaining: {gold}\n";
+                if (shopItems.Count > 0)
+                {
+                    refreshMsg += "Remaining items:\n";
+                    for (int i = 0; i < shopItems.Count; i++)
+                    {
+                        var item = shopItems[i];
+                        var affordable = gold >= item.cost ? "✓" : "✗";
+                        refreshMsg += $"  [{i}] {item.description} — {item.cost}g {affordable}{(item.onSale ? " (SALE)" : "")}\n";
+                    }
+                }
+
+                result = await CombatAgent.RunAgentLoop(
+                    refreshMsg, Agent.ToolDefinitions.ShopTools, Agent.Prompts.NonCombatSystem, linked.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Info("[AutoPlay] Shop: timeout, leaving");
+        }
+
+        await Task.Delay(ActionDelayMs, ct);
         await ClickProceed(shopRoom, ct);
         return true;
     }
+
+    #region Shop Helpers
+
+    private record ShopItem(string type, string name, string description, int cost, bool onSale, MerchantEntry entry);
+
+    private static List<ShopItem> CollectShopItems(MerchantInventory inventory)
+    {
+        var items = new List<ShopItem>();
+
+        foreach (var card in inventory.CharacterCardEntries)
+        {
+            if (!card.IsStocked) continue;
+            var c = card.CreationResult?.Card;
+            if (c == null) continue;
+            var name = c.Title?.ToString() ?? c.GetType().Name;
+            var up = c.IsUpgraded ? "+" : "";
+            var type = c.Type.ToString();
+            var rarity = c.Rarity.ToString();
+            string desc = "";
+            try { desc = c.GetDescriptionForPile(MegaCrit.Sts2.Core.Entities.Cards.PileType.None) ?? ""; }
+            catch { }
+            items.Add(new ShopItem("card", name,
+                $"[Card] {name}{up} ({c.EnergyCost?.GetAmountToSpend() ?? 0} {type}, {rarity}) — {desc}",
+                card.Cost, card.IsOnSale, card));
+        }
+
+        foreach (var card in inventory.ColorlessCardEntries)
+        {
+            if (!card.IsStocked) continue;
+            var c = card.CreationResult?.Card;
+            if (c == null) continue;
+            var name = c.Title?.ToString() ?? c.GetType().Name;
+            var up = c.IsUpgraded ? "+" : "";
+            var type = c.Type.ToString();
+            string desc = "";
+            try { desc = c.GetDescriptionForPile(MegaCrit.Sts2.Core.Entities.Cards.PileType.None) ?? ""; }
+            catch { }
+            items.Add(new ShopItem("card", name,
+                $"[Colorless Card] {name}{up} ({c.EnergyCost?.GetAmountToSpend() ?? 0} {type}) — {desc}",
+                card.Cost, card.IsOnSale, card));
+        }
+
+        foreach (var relic in inventory.RelicEntries)
+        {
+            if (!relic.IsStocked) continue;
+            var r = relic.Model;
+            if (r == null) continue;
+            var name = r.Title?.ToString() ?? r.GetType().Name;
+            string desc = "";
+            try { desc = r.Description?.GetFormattedText() ?? ""; }
+            catch { }
+            items.Add(new ShopItem("relic", name,
+                $"[Relic] {name} — {desc}", relic.Cost, false, relic));
+        }
+
+        foreach (var potion in inventory.PotionEntries)
+        {
+            if (!potion.IsStocked) continue;
+            var p = potion.Model;
+            if (p == null) continue;
+            var name = p.Title?.ToString() ?? p.GetType().Name;
+            string desc = "";
+            try { desc = p.Description?.GetFormattedText() ?? ""; }
+            catch { }
+            items.Add(new ShopItem("potion", name,
+                $"[Potion] {name} — {desc}", potion.Cost, false, potion));
+        }
+
+        if (inventory.CardRemovalEntry != null && inventory.CardRemovalEntry.IsStocked)
+        {
+            items.Add(new ShopItem("removal", "Card Removal",
+                $"[Service] Remove a card from your deck",
+                inventory.CardRemovalEntry.Cost, false, inventory.CardRemovalEntry));
+        }
+
+        return items;
+    }
+
+    private async Task<string> ExecuteShopBuy(Node shopRoom, MerchantInventory inventory,
+        List<ShopItem> shopItems, int itemIdx, CancellationToken ct)
+    {
+        if (itemIdx < 0 || itemIdx >= shopItems.Count)
+            return $"Invalid item index {itemIdx}. Valid range: 0-{shopItems.Count - 1}";
+
+        var item = shopItems[itemIdx];
+
+        if (item.type == "removal")
+            return await ExecuteShopRemoveCard(shopRoom, inventory, ct);
+
+        // Find the matching NMerchantSlot UI node and click it
+        var slots = UiHelper.FindAll<NMerchantSlot>(shopRoom);
+        foreach (var slot in slots)
+        {
+            if (!GodotObject.IsInstanceValid(slot)) continue;
+            try
+            {
+                if (slot.Entry == item.entry)
+                {
+                    Log.Info($"[AutoPlay] Shop: buying {item.name} for {item.cost}g");
+                    var hitbox = ((Node)slot).GetNodeOrNull<NClickableControl>("%Hitbox");
+                    if (hitbox != null)
+                    {
+                        await UiHelper.Click(hitbox, 100);
+                        await Task.Delay(ActionDelayMs * 2, ct);
+                        return $"Purchased {item.name} for {item.cost}g.";
+                    }
+                }
+            }
+            catch { }
+        }
+
+        return $"Could not find shop slot for {item.name}. It may have been sold out.";
+    }
+
+    private async Task<string> ExecuteShopRemoveCard(Node shopRoom, MerchantInventory inventory, CancellationToken ct)
+    {
+        if (inventory.CardRemovalEntry == null || !inventory.CardRemovalEntry.IsStocked)
+            return "Card removal service is not available.";
+
+        // Find and click the removal slot
+        var removalSlots = UiHelper.FindAll<NMerchantCardRemoval>(shopRoom);
+        foreach (var slot in removalSlots)
+        {
+            if (!GodotObject.IsInstanceValid(slot)) continue;
+            Log.Info($"[AutoPlay] Shop: using card removal for {inventory.CardRemovalEntry.Cost}g");
+            var hitbox = ((Node)slot).GetNodeOrNull<NClickableControl>("%Hitbox");
+            if (hitbox == null) return "Could not find card removal hitbox.";
+            await UiHelper.Click(hitbox, 100);
+            await Task.Delay(ActionDelayMs * 3, ct);
+            // Card selection overlay will appear — handled by the phase loop
+            return $"Card removal initiated ({inventory.CardRemovalEntry.Cost}g). Select a card to remove.";
+        }
+
+        return "Could not find card removal service in shop.";
+    }
+
+    #endregion
 
     private async Task<bool> HandleTreasure(CancellationToken ct)
     {

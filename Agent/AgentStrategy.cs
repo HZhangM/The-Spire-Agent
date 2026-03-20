@@ -266,6 +266,27 @@ public class AgentStrategy : IPlayStrategy
                 if (!string.IsNullOrEmpty(enemyMemories))
                     sb.Append($"\n\n=== ENEMY KNOWLEDGE (from memory) ===\n{enemyMemories}");
 
+                // Inject deck card memories (all unique cards in deck, not just hand)
+                var deckCardNames = new HashSet<string>(state.Hand.Select(c => c.Name));
+                try
+                {
+                    var runState = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
+                    var pcs = runState?.Players.FirstOrDefault()?.PlayerCombatState;
+                    if (pcs != null)
+                        foreach (var card in pcs.AllCards)
+                            deckCardNames.Add(card.Title?.ToString() ?? card.GetType().Name);
+                }
+                catch { }
+                var cardMemories = memory.GetForInjection("card", deckCardNames, 500);
+                if (!string.IsNullOrEmpty(cardMemories))
+                    sb.Append($"\n\n=== CARD KNOWLEDGE (from memory) ===\n{cardMemories}");
+
+                // Inject relic memories
+                var relicNames = state.Relics.Select(r => r.Name).Distinct();
+                var relicMemories = memory.GetForInjection("relic", relicNames, 300);
+                if (!string.IsNullOrEmpty(relicMemories))
+                    sb.Append($"\n\n=== RELIC KNOWLEDGE (from memory) ===\n{relicMemories}");
+
                 // Inject strategy
                 var (charStrat, genStrat) = memory.ReadStrategy();
                 var stratParts = new List<string>();
