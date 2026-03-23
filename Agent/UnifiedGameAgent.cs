@@ -366,10 +366,10 @@ public class UnifiedGameAgent
             foreach (var relic in player.Relics)
             {
                 string desc = "";
-                try { desc = relic.Description?.GetRawText() ?? ""; }
+                try { desc = JsonUtils.SafeLocText(relic.Description); }
                 catch { }
 
-                var name = relic.Title?.GetRawText() ?? relic.GetType().Name;
+                var name = JsonUtils.SafeLocText(relic.Title, relic.GetType().Name);
                 var counter = relic.DisplayAmount > 0 ? $" [{relic.DisplayAmount}]" : "";
                 relics.Add($"  {name}{counter} - {desc}");
             }
@@ -617,7 +617,7 @@ public class UnifiedGameAgent
             var runState = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
             var player = runState?.Players.FirstOrDefault();
             if (player == null) return [];
-            return player.Relics.Select(r => r.Title?.GetRawText() ?? r.GetType().Name).ToList();
+            return player.Relics.Select(r => JsonUtils.SafeLocText(r.Title, r.GetType().Name)).ToList();
         }
         catch { return []; }
     }

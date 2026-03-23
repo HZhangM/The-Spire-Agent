@@ -1,3 +1,4 @@
+using AutoPlayMod.Agent;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -152,14 +153,14 @@ public static class BattleStateCollector
             if (slot != null)
             {
                 string potionDesc = "";
-                try { potionDesc = slot.Description?.GetRawText() ?? ""; }
+                try { potionDesc = JsonUtils.SafeLocText(slot.Description); }
                 catch { }
 
                 potions.Add(new PotionState
                 {
                     Index = idx,
                     Id = slot.GetType().Name,
-                    Name = slot.Title?.GetRawText() ?? slot.GetType().Name,
+                    Name = JsonUtils.SafeLocText(slot.Title, slot.GetType().Name),
                     Description = potionDesc,
                     TargetType = slot.TargetType.ToString(),
                 });
@@ -175,13 +176,13 @@ public static class BattleStateCollector
         foreach (var relic in player.Relics)
         {
             string relicDesc = "";
-            try { relicDesc = relic.Description?.GetRawText() ?? ""; }
+            try { relicDesc = JsonUtils.SafeLocText(relic.Description); }
             catch { }
 
             relics.Add(new RelicState
             {
                 Id = relic.GetType().Name,
-                Name = relic.Title?.GetRawText() ?? relic.GetType().Name,
+                Name = JsonUtils.SafeLocText(relic.Title, relic.GetType().Name),
                 Description = relicDesc,
                 Counter = relic.DisplayAmount,
             });
@@ -199,7 +200,7 @@ public static class BattleStateCollector
             {
                 // Use plain Description to avoid SmartFormat errors
                 // (SmartDescription needs context variables not available here)
-                powerDesc = power.Description?.GetRawText() ?? "";
+                powerDesc = JsonUtils.SafeLocText(power.Description);
             }
             catch
             {
@@ -209,7 +210,7 @@ public static class BattleStateCollector
             powers.Add(new PowerState
             {
                 Id = power.GetType().Name,
-                Name = power.Title?.GetRawText() ?? power.GetType().Name,
+                Name = JsonUtils.SafeLocText(power.Title, power.GetType().Name),
                 Description = powerDesc,
                 Amount = power.Amount,
             });

@@ -1,8 +1,10 @@
 using Godot;
+using MegaCrit.Sts2.Core.AutoSlay.Helpers;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
@@ -82,7 +84,26 @@ public static class GamePhaseDetector
             var screen = stack.Peek();
             if (screen != null)
             {
-                return ClassifyOverlay(screen);
+                // After clicking Skip/Proceed on a terminal rewards screen,
+                // the game transitions to map but the overlay stays temporarily.
+                // Detect this by checking if the proceed button is disabled
+                // (the game disables it after clicking as part of the transition).
+                if (screen is NRewardsScreen rewards)
+                {
+                    var proceed = UiHelper.FindAll<NProceedButton>((Node)rewards).FirstOrDefault();
+                    if (proceed != null && !proceed.IsEnabled)
+                    {
+                        // Proceed was already clicked — fall through to detect map
+                    }
+                    else
+                    {
+                        return ClassifyOverlay(screen);
+                    }
+                }
+                else
+                {
+                    return ClassifyOverlay(screen);
+                }
             }
         }
 

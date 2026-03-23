@@ -1,3 +1,4 @@
+using AutoPlayMod.Agent;
 using System.Text;
 using System.Text.Json;
 using Godot;
@@ -38,7 +39,6 @@ public class PhaseHandler
     public IPlayStrategy? CombatStrategy { get; set; }
 
     private const int ActionDelayMs = 500;
-    private bool _proceedTriggered;
     private int _lastRewardCount = -1;
     private int _rewardStuckCount;
     private readonly HashSet<int> _skippedRewardIndices = new();
@@ -49,7 +49,12 @@ public class PhaseHandler
     /// </summary>
     public async Task<bool> HandlePhase(GamePhase phase, CancellationToken ct)
     {
-        _proceedTriggered = phase != GamePhase.RewardsScreen ? false : _proceedTriggered;
+        // Reset reward-specific state when leaving rewards phases
+        if (phase != GamePhase.RewardsScreen && phase != GamePhase.CardRewardSelect)
+        {
+            _cardRewardSkipped = false;
+            _skippedRewardIndices.Clear();
+        }
 
         return phase switch
         {
@@ -210,7 +215,7 @@ public class PhaseHandler
         _lastRewardCount = -1;
         _rewardStuckCount = 0;
         _skippedRewardIndices.Clear();
-        _cardRewardSkipped = false;
+        // Don't reset _cardRewardSkipped here — only reset when phase changes away from RewardsScreen
 
         var linkedRewards = UiHelper.FindAll<NLinkedRewardSet>(screenNode);
         if (linkedRewards.Count > 0)
@@ -227,28 +232,20 @@ public class PhaseHandler
             }
         }
 
-        // No more rewards (or all uncollectable) — trigger proceed via the game's own handler.
-        // Call OnProceedButtonPressed directly on the rewards screen — this handles ALL cases
-        // (normal combat, boss act transition, victory room, etc.) without us needing to know the logic.
-        if (!_proceedTriggered)
+        // No more collectible rewards — click the Skip/Proceed button.
+        // The game handles the transition internally via OnProceedButtonPressed.
+        // After clicking, the button gets disabled. GamePhaseDetector will then
+        // skip this completed rewards screen and detect the map underneath.
+        var proceedBtn = UiHelper.FindAll<NProceedButton>(screenNode).FirstOrDefault();
+        if (proceedBtn != null && GodotObject.IsInstanceValid(proceedBtn) && proceedBtn.IsEnabled)
         {
-            _proceedTriggered = true;
-            Log.Info("[AutoPlay] Rewards: calling OnProceedButtonPressed");
-
-            // Find the proceed button to pass as argument (the handler ignores it, but signature requires it)
-            var proceedBtn = UiHelper.FindAll<NProceedButton>(screenNode).FirstOrDefault();
-            if (proceedBtn != null)
-            {
-                ((Node)rewardsScreen).Call("OnProceedButtonPressed", proceedBtn);
-            }
-            else
-            {
-                // Fallback: remove overlay + proceed manually
-                Log.Warn("[AutoPlay] Rewards: no proceed button found, using fallback");
-                NOverlayStack.Instance.Remove(rewardsScreen);
-                TaskHelper.RunSafely(RunManager.Instance.ProceedFromTerminalRewardsScreen());
-            }
-            await Task.Delay(ActionDelayMs * 4, ct);
+            Log.Info($"[AutoPlay] Rewards: clicking Skip/Proceed (IsSkip={proceedBtn.IsSkip})");
+            await UiHelper.Click(proceedBtn, 100);
+            await Task.Delay(ActionDelayMs * 2, ct);
+        }
+        else
+        {
+            await Task.Delay(ActionDelayMs, ct);
         }
         return true;
     }
@@ -263,17 +260,17 @@ public class PhaseHandler
         bool selected = await SelectCardFromScreen(screen, "Card reward", CardSelectionPurpose.Reward, canSkip: true);
         if (!selected)
         {
-            Log.Info("[AutoPlay] Card reward: skipping");
+            // Agent chose to skip — click the native Skip alternative button on the card selection screen
+            Log.Info("[AutoPlay] Card reward: skipping via alternative button");
             _cardRewardSkipped = true;
-            // Card reward screen has no proceed button — close it by removing from overlay
-            var overlay = NOverlayStack.Instance;
-            if (overlay != null && overlay.Peek() is NCardRewardSelectionScreen)
+            var altButtons = UiHelper.FindAll<MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NCardRewardAlternativeButton>(screen);
+            foreach (var btn in altButtons)
             {
-                overlay.Remove(overlay.Peek()!);
-            }
-            else
-            {
-                await ClickProceed(screen, ct);
+                if (GodotObject.IsInstanceValid(btn) && btn.IsEnabled)
+                {
+                    await UiHelper.Click(btn, 100);
+                    break;
+                }
             }
         }
         await Task.Delay(ActionDelayMs, ct);
@@ -329,14 +326,27 @@ public class PhaseHandler
             Log.Info("[AutoPlay] Map: only 1 node, auto-selecting");
         }
 
+        // Only click when travel is enabled and context is ready
+        if (!mapScreen.IsTravelEnabled)
+        {
+            Log.Info("[AutoPlay] Map: travel not enabled, waiting");
+            await Task.Delay(ActionDelayMs, ct);
+            return false;
+        }
+
+        var me = MegaCrit.Sts2.Core.Context.LocalContext.GetMe(
+            RunManager.Instance?.DebugOnlyGetState());
+        if (me == null)
+        {
+            Log.Info("[AutoPlay] Map: LocalContext not ready, waiting");
+            await Task.Delay(ActionDelayMs, ct);
+            return false;
+        }
+
         var target = travelablePoints[chosenIndex];
         Log.Info($"[AutoPlay] Map: selecting [{target.Point.coord.col},{target.Point.coord.row}] type={target.Point.PointType}");
 
-        if (mapScreen.IsTravelEnabled)
-            target.ForceClick();
-        else
-            mapScreen.OnMapPointSelectedLocally(target);
-
+        target.ForceClick();
         await Task.Delay(ActionDelayMs * 4, ct);
         return true;
     }
@@ -670,9 +680,9 @@ public class PhaseHandler
             var r = relic.Model;
             if (r == null) continue;
             string name, desc = "";
-            try { name = r.Title?.GetRawText() ?? r.GetType().Name; }
+            try { name = JsonUtils.SafeLocText(r.Title, r.GetType().Name); }
             catch { name = r.GetType().Name; }
-            try { desc = r.Description?.GetRawText() ?? ""; }
+            try { desc = JsonUtils.SafeLocText(r.Description); }
             catch { }
             items.Add(new ShopItem("relic", name,
                 $"[Relic] {name} — {desc}", relic.Cost, false, relic));
@@ -684,9 +694,9 @@ public class PhaseHandler
             var p = potion.Model;
             if (p == null) continue;
             string name, desc = "";
-            try { name = p.Title?.GetRawText() ?? p.GetType().Name; }
+            try { name = JsonUtils.SafeLocText(p.Title, p.GetType().Name); }
             catch { name = p.GetType().Name; }
-            try { desc = p.Description?.GetRawText() ?? ""; }
+            try { desc = JsonUtils.SafeLocText(p.Description); }
             catch { }
             items.Add(new ShopItem("potion", name,
                 $"[Potion] {name} — {desc}", potion.Cost, false, potion));
@@ -1027,17 +1037,19 @@ public class PhaseHandler
             summary.Act = runState.CurrentActIndex + 1;
             summary.Relics = player.Relics.Select(r =>
             {
-                var name = r.Title?.GetRawText() ?? r.GetType().Name;
-                string desc = "";
-                try { desc = r.Description?.GetRawText() ?? ""; }
+                string name, desc = "";
+                try { name = JsonUtils.SafeLocText(r.Title, r.GetType().Name); }
+                catch { name = r.GetType().Name; }
+                try { desc = JsonUtils.SafeLocText(r.Description); }
                 catch { }
                 return string.IsNullOrEmpty(desc) ? name : $"{name} ({desc})";
             }).ToList();
             summary.Potions = player.Potions.Select(p =>
             {
-                var name = p.Title?.GetRawText() ?? p.GetType().Name;
-                string desc = "";
-                try { desc = p.Description?.GetRawText() ?? ""; }
+                string name, desc = "";
+                try { name = JsonUtils.SafeLocText(p.Title, p.GetType().Name); }
+                catch { name = p.GetType().Name; }
+                try { desc = JsonUtils.SafeLocText(p.Description); }
                 catch { }
                 return string.IsNullOrEmpty(desc) ? name : $"{name} ({desc})";
             }).ToList();

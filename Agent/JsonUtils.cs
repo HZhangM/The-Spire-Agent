@@ -1,10 +1,23 @@
+using MegaCrit.Sts2.Core.Localization;
+
 namespace AutoPlayMod.Agent;
 
 /// <summary>
-/// Shared JSON/markdown extraction utilities.
+/// Shared utilities.
 /// </summary>
 public static class JsonUtils
 {
+    /// <summary>
+    /// Safely get text from a LocString. GetRawText() can throw LocException if the key
+    /// doesn't exist in the localization table. This method never throws.
+    /// </summary>
+    public static string SafeLocText(LocString? loc, string fallback = "")
+    {
+        if (loc == null) return fallback;
+        try { return loc.GetRawText() ?? fallback; }
+        catch { return fallback; }
+    }
+
     /// <summary>
     /// Extract a JSON object or array from an LLM response.
     /// Handles markdown code fences, leading text, etc.

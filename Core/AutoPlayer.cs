@@ -227,7 +227,17 @@ public class AutoPlayer
                 _wasCombatActive = combatActive;
 
                 // Detect current phase
-                var phase = GamePhaseDetector.Detect();
+                GamePhase phase;
+                try
+                {
+                    phase = GamePhaseDetector.Detect();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[AutoPlay] Phase detection error: {ex.Message}\n{ex.StackTrace}");
+                    await Task.Delay(1000, ct);
+                    continue;
+                }
 
                 // Combat phases are driven by TurnStarted event, not this loop
                 if (GamePhaseDetector.IsCombatPhase(phase))
@@ -267,9 +277,17 @@ public class AutoPlayer
 
                 if (!_lastPhaseHandled || needsRepeat)
                 {
-                    bool handled = await Handler.HandlePhase(phase, ct);
-                    if (!needsRepeat)
-                        _lastPhaseHandled = handled;
+                    try
+                    {
+                        bool handled = await Handler.HandlePhase(phase, ct);
+                        if (!needsRepeat)
+                            _lastPhaseHandled = handled;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error($"[AutoPlay] HandlePhase({phase}) error: {ex.Message}\n{ex.StackTrace}");
+                        await Task.Delay(1000, ct);
+                    }
                 }
 
                 _lastPhase = phase;

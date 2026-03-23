@@ -1,3 +1,4 @@
+using AutoPlayMod.Agent;
 using Godot;
 using MegaCrit.Sts2.Core.AutoSlay.Helpers;
 using MegaCrit.Sts2.Core.Combat;
@@ -1001,17 +1002,17 @@ public class GameFlowController
             summary.Act = runState.CurrentActIndex + 1;
             summary.Relics = player.Relics.Select(r =>
             {
-                var name = r.Title?.GetRawText() ?? r.GetType().Name;
+                var name = JsonUtils.SafeLocText(r.Title, r.GetType().Name);
                 string desc = "";
-                try { desc = r.Description?.GetRawText() ?? ""; }
+                try { desc = JsonUtils.SafeLocText(r.Description); }
                 catch { }
                 return string.IsNullOrEmpty(desc) ? name : $"{name} ({desc})";
             }).ToList();
             summary.Potions = player.Potions.Select(p =>
             {
-                var name = p.Title?.GetRawText() ?? p.GetType().Name;
+                var name = JsonUtils.SafeLocText(p.Title, p.GetType().Name);
                 string desc = "";
-                try { desc = p.Description?.GetRawText() ?? ""; }
+                try { desc = JsonUtils.SafeLocText(p.Description); }
                 catch { }
                 return string.IsNullOrEmpty(desc) ? name : $"{name} ({desc})";
             }).ToList();
