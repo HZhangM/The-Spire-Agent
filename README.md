@@ -1,6 +1,6 @@
-# AutoPlay Mod for Slay the Spire 2
+# The Spire Agent — AI Auto-Play for Slay the Spire 2
 
-[中文文档](MultiLanguages/README_CN.md)
+[中文文档](MultiLanguages/README_CN.md) | [GitHub](https://github.com/HZhangM/The-Spire-Agent)
 
 An AI-powered auto-play mod that plays Slay the Spire 2 autonomously — combat, card rewards, map navigation, events, rest sites, shops, and treasure rooms.
 
@@ -136,7 +136,8 @@ mod/
 │   ├── RunContext.cs              # In-memory run context (archetype, goals, decisions)
 │   ├── RunContextExtractor.cs     # Auto-extracts run context via background LLM
 │   ├── BattleStateCollector.cs    # Extracts combat state for the agent
-│   └── ActionExecutor.cs         # Executes card plays and potion uses
+│   ├── ActionExecutor.cs         # Executes card plays and potion uses
+│   └── GameFlowController.cs     # Non-combat flow controller
 ├── Agent/                         # LLM integration (provider-agnostic)
 │   ├── ILlmClient.cs             # Unified interface: text + tools + conversation
 │   ├── UnifiedGameAgent.cs        # Multi-turn conversation loop with tool use + mutex
@@ -145,7 +146,7 @@ mod/
 │   ├── BattleJournal.cs          # Post-combat reflection (thread-safe, background AI)
 │   ├── Prompts.cs                # System prompts for combat/non-combat/reflection
 │   ├── ToolDefinitions.cs        # All tool schemas
-│   ├── JsonUtils.cs              # Shared JSON/markdown extraction
+│   ├── JsonUtils.cs              # LocString safety, BBCode cleanup, JSON extraction
 │   └── Clients/
 │       ├── ClaudeClient.cs       # Claude API (ILlmClient)
 │       ├── GptClient.cs          # OpenAI-compatible API (ILlmClient)

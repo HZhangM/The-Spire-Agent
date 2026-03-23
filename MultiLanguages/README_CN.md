@@ -1,6 +1,6 @@
-# AutoPlay Mod — 杀戮尖塔 2 AI 自动打牌
+# The Spire Agent — 杀戮尖塔 2 AI 自动打牌
 
-[English](../README.md)
+[English](../README.md) | [GitHub](https://github.com/HZhangM/The-Spire-Agent)
 
 一款 AI 驱动的杀戮尖塔 2 全自动游玩 Mod——战斗出牌、卡牌奖励、地图导航、事件选择、休息站、商店和宝箱全部自主处理。
 
@@ -136,7 +136,8 @@ mod/
 │   ├── RunContext.cs              # 内存中的局上下文
 │   ├── RunContextExtractor.cs     # 后台 LLM 自动提取局上下文
 │   ├── BattleStateCollector.cs    # 为 Agent 提取战斗状态
-│   └── ActionExecutor.cs         # 执行出牌和使用药水
+│   ├── ActionExecutor.cs         # 执行出牌和使用药水
+│   └── GameFlowController.cs     # 非战斗流程控制器
 ├── Agent/                         # LLM 集成（provider 无关）
 │   ├── ILlmClient.cs             # 统一接口：文本 + 工具 + 对话
 │   ├── UnifiedGameAgent.cs        # 多轮对话循环 + 互斥锁
@@ -145,7 +146,7 @@ mod/
 │   ├── BattleJournal.cs          # 战后复盘（线程安全，后台 AI）
 │   ├── Prompts.cs                # 系统提示词
 │   ├── ToolDefinitions.cs        # 所有工具定义
-│   ├── JsonUtils.cs              # 共享 JSON/Markdown 提取
+│   ├── JsonUtils.cs              # LocString 安全包装、BBCode 清理、JSON 提取
 │   └── Clients/
 │       ├── ClaudeClient.cs       # Claude API
 │       ├── GptClient.cs          # OpenAI 兼容 API
