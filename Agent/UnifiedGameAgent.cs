@@ -141,6 +141,10 @@ public class UnifiedGameAgent
         }
         finally
         {
+            // Temporarily save log after every agent call (for debugging)
+            var sessionType = _inCombatSession ? "combat" : _inNonCombatSession ? "noncombat" : "misc";
+            var sessionNum = _inCombatSession ? _combatCount : _nonCombatCount;
+            _ = SaveConversationLog($"{sessionType}_{sessionNum:D3}_live");
             _agentLock.Release();
         }
     }
@@ -390,10 +394,10 @@ public class UnifiedGameAgent
         {
             var runState = RunManager.Instance?.DebugOnlyGetState();
             var player = runState?.Players.FirstOrDefault();
-            var pcs = player?.PlayerCombatState;
-            if (pcs == null) return "Deck not available (not in a run or player not found).";
+            if (player == null) return "Deck not available (not in a run or player not found).";
 
-            var cards = pcs.AllCards.ToList();
+            // Use player.Deck.Cards (persistent deck) — PlayerCombatState is null outside combat
+            var cards = player.Deck.Cards.ToList();
             if (cards.Count == 0) return "Deck is empty.";
 
             var sb = new StringBuilder();
@@ -629,10 +633,10 @@ public class UnifiedGameAgent
         {
             var runState = RunManager.Instance?.DebugOnlyGetState();
             var player = runState?.Players.FirstOrDefault();
-            var pcs = player?.PlayerCombatState;
-            if (pcs == null) return "Deck stats not available.";
+            if (player == null) return "Deck stats not available.";
 
-            var cards = pcs.AllCards.ToList();
+            // Use player.Deck.Cards (persistent deck) — PlayerCombatState is null outside combat
+            var cards = player.Deck.Cards.ToList();
             if (cards.Count == 0) return "Deck is empty.";
 
             int attacks = 0, skills = 0, powers = 0, other = 0;

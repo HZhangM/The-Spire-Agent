@@ -44,7 +44,7 @@ Best for: intelligent play, learning, research.
 
 ### Requirements
 
-- Slay the Spire 2 (v0.99.1+) with modding enabled
+- Slay the Spire 2 (v0.100.1+) with modding enabled
 - For Agent mode: an API key for Claude, GPT, or Gemini
 
 ### Installation

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using MegaCrit.Sts2.Core.Localization;
 
 namespace AutoPlayMod.Agent;
@@ -7,15 +8,75 @@ namespace AutoPlayMod.Agent;
 /// </summary>
 public static class JsonUtils
 {
+    // Matches energy icon images — replace with "Energy" text
+    private static readonly Regex EnergyIconRegex = new(@"\[img\][^\[]*energy[^\[]*\[/img\]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // Matches other [img]...[/img] blocks (non-energy icons)
+    private static readonly Regex ImgRegex = new(@"\[img\][^\[]*\[/img\]", RegexOptions.Compiled);
+    // Matches BBCode tags like [gold], [/gold], [blue], [green], etc.
+    private static readonly Regex BbCodeTagRegex = new(@"\[/?[a-zA-Z_][^\]]*\]", RegexOptions.Compiled);
+    // Matches unresolved SmartFormat variables like {Heal}, {DexterityPower}, {energyPrefix:...}
+    private static readonly Regex SmartFormatVarRegex = new(@"\{[a-zA-Z]\w*(?::[^}]*)?\}", RegexOptions.Compiled);
+
     /// <summary>
-    /// Safely get text from a LocString. GetRawText() can throw LocException if the key
-    /// doesn't exist in the localization table. This method never throws.
+    /// Safely get text from a LocString. Tries GetFormattedText() first (resolves variables),
+    /// falls back to GetRawText(). Strips BBCode tags and unresolved SmartFormat variables.
+    /// Never throws.
+    /// </summary>
+    /// <summary>
+    /// Safe raw text extraction. Uses GetRawText() only (no SmartFormat).
+    /// For descriptions that need variable resolution, use SafeFormattedLocText() instead.
     /// </summary>
     public static string SafeLocText(LocString? loc, string fallback = "")
     {
         if (loc == null) return fallback;
-        try { return loc.GetRawText() ?? fallback; }
+        try
+        {
+            var text = loc.GetRawText();
+            if (string.IsNullOrEmpty(text)) return fallback;
+            return CleanText(text);
+        }
         catch { return fallback; }
+    }
+
+    /// <summary>
+    /// Safe formatted text extraction. Uses GetFormattedText() which resolves SmartFormat
+    /// variables but may log errors for missing variables. Use only when variables have
+    /// been pre-injected (e.g. power descriptions with Amount/OwnerName).
+    /// </summary>
+    public static string SafeFormattedLocText(LocString? loc, string fallback = "")
+    {
+        if (loc == null) return fallback;
+        try
+        {
+            var text = loc.GetFormattedText();
+            if (string.IsNullOrEmpty(text)) return fallback;
+            return CleanText(text);
+        }
+        catch
+        {
+            // Fall back to raw
+            return SafeLocText(loc, fallback);
+        }
+    }
+
+    /// <summary>
+    /// Strip BBCode tags and unresolved SmartFormat variables from text.
+    /// </summary>
+    public static string CleanText(string text)
+    {
+        // Replace energy icon images with "Energy" text
+        text = EnergyIconRegex.Replace(text, "Energy");
+        // Remove other [img]...[/img] blocks
+        text = ImgRegex.Replace(text, "");
+        // Remove BBCode tags like [gold], [/gold], [blue], etc.
+        text = BbCodeTagRegex.Replace(text, "");
+        // Replace known SmartFormat variables with meaningful text
+        text = Regex.Replace(text, @"\{energyPrefix:[^}]*\}", "Energy");
+        // Remove remaining unresolved SmartFormat variables
+        text = SmartFormatVarRegex.Replace(text, "?");
+        // Collapse multiple spaces
+        text = Regex.Replace(text, @"  +", " ");
+        return text.Trim();
     }
 
     /// <summary>

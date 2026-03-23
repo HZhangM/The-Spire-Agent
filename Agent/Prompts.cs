@@ -56,24 +56,25 @@ public static class Prompts
     /// </summary>
     public const string ReflectionSystem = """
         You are an expert Slay the Spire 2 analyst reviewing a completed combat.
-        Analyze the battle and provide structured insights.
+        Provide a CONCISE structured reflection focused on actionable insights.
 
         Return your analysis as a tool call with:
         - performance_rating: 1-5 (1=terrible, 5=perfect)
-        - hp_loss_analysis: Why HP was lost — was it because of insufficient offense (fight
-          dragged on too long, allowing enemies to attack repeatedly) or insufficient defense
-          (not blocking big hits when we should have)? Be specific about which turns.
-        - deck_gaps: What the deck is MISSING — categorize needs:
+        - hp_loss_analysis: Brief root cause of HP loss (1-2 sentences). Was it insufficient
+          offense (fight too long) or defense (failed to block key hits)? Do NOT describe
+          every turn — just the core issue.
+        - deck_gaps: What the deck is MISSING (brief, categorized):
           * Offense (damage, scaling, multi-hit, AOE)
-          * Defense (block, weak application, damage mitigation)
-          * Economy (energy generation, cost reduction)
-          * Draw (card draw, deck thinning, scry)
-          List specific card types or effects that would have helped.
-        - key_mistakes: list of specific mistakes made
-        - key_successes: list of things done well
-        - lessons: list of actionable lessons for future combats
-        - card_evaluations: which cards performed well/poorly in this fight
-        - strategy_update: one-sentence strategy adjustment for future fights
+          * Defense (block, weak application)
+          * Economy (energy, cost reduction)
+          * Draw (card draw, deck thinning)
+        - key_mistakes: Only the 1-2 most impactful mistakes
+        - key_successes: 1-2 things done well
+        - lessons: Actionable lessons focused on ENEMY BEHAVIOR PATTERNS — what buffs/debuffs
+          does this enemy use, what counter-strategies work, what to watch out for.
+          These lessons should help in future fights against the same or similar enemies.
+        - card_evaluations: which cards performed well/poorly (brief)
+        - strategy_update: one-sentence strategy adjustment
         """;
 
     /// <summary>

@@ -1056,17 +1056,14 @@ public class PhaseHandler
             summary.PotionSlots = player.Potions.Count();
             summary.PotionSlotsMax = player.MaxPotionCount;
 
-            var pcs = player.PlayerCombatState;
-            if (pcs != null)
+            // Use player.Deck.Cards (persistent deck) — PlayerCombatState is null outside combat
+            summary.DeckCards = player.Deck.Cards.Select(c =>
             {
-                summary.DeckCards = pcs.AllCards.Select(c =>
-                {
-                    var name = c.Title ?? c.GetType().Name;
-                    var up = c.IsUpgraded ? "+" : "";
-                    var cost = c.EnergyCost?.GetAmountToSpend() ?? 0;
-                    return $"{name}{up} ({cost} {c.Type})";
-                }).ToList();
-            }
+                var name = c.Title ?? c.GetType().Name;
+                var up = c.IsUpgraded ? "+" : "";
+                var cost = c.EnergyCost?.GetAmountToSpend() ?? 0;
+                return $"{name}{up} ({cost} {c.Type})";
+            }).ToList();
         }
         catch { }
         return summary;

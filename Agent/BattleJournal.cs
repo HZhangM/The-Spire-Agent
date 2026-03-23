@@ -276,7 +276,14 @@ public class BattleJournal
         }
 
         if (finalState.Player.Powers.Count > 0)
-            battleSummary.AppendLine($"\nFinal player powers: {string.Join(", ", finalState.Player.Powers.Select(p => $"{p.Name}x{p.Amount}"))}");
+            battleSummary.AppendLine($"\nFinal player powers: {string.Join(", ", finalState.Player.Powers.Select(p => $"{p.Name}({p.Amount})"))}");
+
+        // Include enemy buffs/debuffs — critical for understanding the fight
+        foreach (var e in finalState.Enemies)
+        {
+            if (e.Powers.Count > 0)
+                battleSummary.AppendLine($"Enemy {e.Name} powers: {string.Join(", ", e.Powers.Select(p => $"{p.Name}({p.Amount}) — {p.Description}"))}");
+        }
 
         var userPrompt = $"""
             {battleSummary}
@@ -284,15 +291,18 @@ public class BattleJournal
             Previous battle reflections for context:
             {(string.IsNullOrEmpty(previousContext) ? "(first battle)" : previousContext)}
 
-            Analyze this battle and provide structured reflection. Pay special attention to:
-            - HP LOSS ANALYSIS: Was HP lost because of insufficient offense (fight dragged on) or
-              insufficient defense (didn't block big hits)? Be specific about which turns and decisions.
+            Analyze this battle and provide a CONCISE structured reflection. Focus on:
+            - ENEMY PATTERNS: What buffs/debuffs did the enemy have? What were their attack patterns?
+              What counter-strategies work against this enemy type?
+            - HP LOSS ANALYSIS: Brief summary — was it insufficient offense or defense? Do NOT
+              describe every single turn's block vs damage. Just identify the root cause (1-2 sentences).
             - DECK GAPS: What card types/effects would have improved this fight?
-              Categories: Offense (damage/scaling/AOE), Defense (block/weak), Economy (energy/cost), Draw (draw/thin/scry)
-            - Turns where cards were available but end_turn was called early
-            - Missed combos (e.g. Vulnerable not applied before big attacks)
-            - Inefficient energy usage
-            - Poor target selection
+              Categories: Offense, Defense, Economy, Draw. Be specific but brief.
+            - KEY MISTAKES: Only the 1-2 most impactful strategic errors (e.g. missed Vulnerable
+              application, wrong target priority). Skip minor details.
+
+            Keep the response SHORT and actionable. Focus on lessons that apply to future fights
+            against similar enemies, not a turn-by-turn replay.
             """;
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));

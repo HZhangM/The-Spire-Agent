@@ -148,6 +148,10 @@ public static class GamePhaseDetector
         {
             NRewardsScreen => GamePhase.RewardsScreen,
             NCardRewardSelectionScreen => GamePhase.CardRewardSelect,
+            // NChooseACardSelectionScreen: potion card selection (Skill/Colorless/Attack Potion)
+            NChooseACardSelectionScreen => CombatManager.Instance.IsInProgress
+                ? GamePhase.CombatOverlaySelect
+                : GamePhase.CardGridSelect,
             // NSimpleCardSelectScreen is a subclass of NCardGridSelectionScreen — check it first
             NSimpleCardSelectScreen => CombatManager.Instance.IsInProgress
                 ? GamePhase.CombatOverlaySelect

@@ -125,7 +125,7 @@ public static class BattleStateCollector
         {
             // Get card description with resolved values (damage/block numbers)
             string desc = "";
-            try { desc = card.GetDescriptionForPile(PileType.None) ?? ""; }
+            try { desc = JsonUtils.CleanText(card.GetDescriptionForPile(PileType.None) ?? ""); }
             catch { }
 
             cards.Add(new CardState
@@ -198,13 +198,36 @@ public static class BattleStateCollector
             string powerDesc = "";
             try
             {
-                // Use plain Description to avoid SmartFormat errors
-                // (SmartDescription needs context variables not available here)
-                powerDesc = JsonUtils.SafeLocText(power.Description);
+                // Mimic the game's HoverTips logic for full descriptions:
+                // If HasSmartDescription && IsMutable, use SmartDescription with variables injected.
+                // Otherwise use Description with dumb variables.
+                if (power.HasSmartDescription && power.IsMutable && power.Owner?.CombatState != null)
+                {
+                    var loc = power.SmartDescription;
+                    loc.Add("Amount", power.Amount);
+                    loc.Add("OnPlayer", power.Owner.IsPlayer);
+                    loc.Add("IsMultiplayer", power.Owner.CombatState.Players.Count > 1);
+                    loc.Add("PlayerCount", power.Owner.CombatState.Players.Count);
+                    try
+                    {
+                        loc.Add("OwnerName", power.Owner.IsPlayer
+                            ? power.Owner.Player?.Character?.Title
+                            : power.Owner.Monster?.Title);
+                    }
+                    catch { }
+                    power.DynamicVars.AddTo(loc);
+                    powerDesc = JsonUtils.SafeFormattedLocText(loc);
+                }
+                else
+                {
+                    powerDesc = JsonUtils.SafeLocText(power.Description);
+                }
             }
             catch
             {
-                powerDesc = power.GetType().Name;
+                // Final fallback
+                try { powerDesc = JsonUtils.SafeLocText(power.Description); }
+                catch { powerDesc = power.GetType().Name; }
             }
 
             powers.Add(new PowerState
@@ -242,7 +265,7 @@ public static class BattleStateCollector
         foreach (var card in pile)
         {
             string desc = "";
-            try { desc = card.GetDescriptionForPile(PileType.None) ?? ""; }
+            try { desc = JsonUtils.CleanText(card.GetDescriptionForPile(PileType.None) ?? ""); }
             catch { }
 
             cards.Add(new CardState
